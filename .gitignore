@@ -1,0 +1,6 @@
+*pdf
+*.swp
+__pycache__/
+data/
+work/
+
