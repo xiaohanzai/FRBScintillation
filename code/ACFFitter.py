@@ -1,12 +1,17 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-f_cauchy = lambda dnu, m, nu_dc: m / (dnu**2/nu_dc**2 + 1.)
+f_lorenzian = lambda dnu, m, nu_dc: m / (dnu**2/nu_dc**2 + 1.)
 
-def hmhw_cauchy(nus, acf, ebars=None, exclude_zero=True):
+def fit_lorenzian(nus, acf, ebars=None, exclude_zero=False):
     """
     Fits the half-maximum half-width of the autocorrelation function to a Cauchy distribution.
     """
+    if acf[0] == np.nan:
+        # the whole spec array must be nan's
+        return np.nan, np.nan, np.nan. np.nan
+
+    # fit Lorenzian
     start = 0
     if exclude_zero:
         start = 1
@@ -14,8 +19,16 @@ def hmhw_cauchy(nus, acf, ebars=None, exclude_zero=True):
     sigma = None
     if ebars is not None:
         sigma = ebars[start:][ii]
-    popt, pcov = curve_fit(f_cauchy, nus[start:][ii], acf[start:][ii], sigma=sigma, bounds=([0, 0], [np.max(acf[:1]), np.inf]), check_finite=False)
-    return popt, pcov
+    try:
+        popt, pcov = curve_fit(f_lorenzian, nus[start:][ii], acf[start:][ii], sigma=sigma, bounds=([0, 0], [1., 10.]), check_finite=False)
+        perr = np.sqrt(np.diag(pcov))
+        m = popt[0]
+        m_err = perr[0]
+        nu_dc = popt[1]
+        nu_dc_err = perr[1]
+    except:
+        m, m_err, nu_dc, nu_dc_err = 0, 0, 0, 0 # I suppose so; need to check
+    return m, m_err, nu_dc, nu_dc_err
 
 class ACFFitter():
     def __init__(self, acf_on, acf_offs, nus, ebar_scale_fac=1.):
@@ -26,14 +39,9 @@ class ACFFitter():
 
         self.nus = nus
 
-    def fit_nu_dc(self, calc_ebars=True, exclude_zero=True):
+    def fit_acf(self, calc_ebars=True, exclude_zero=False):
         offs_std = None
         if calc_ebars:
             offs_std = np.nanstd(self.acf_offs, axis=0)
-        popt, pcov = hmhw_cauchy(self.nus, self.acf_on, ebars=offs_std*self.ebar_scale_fac, exclude_zero=exclude_zero)
-        perr = np.sqrt(np.diag(pcov))
-        m = popt[0]
-        m_err = perr[0]
-        nu_dc = popt[1]
-        nu_dc_err = perr[1]
+        m, m_err, nu_dc, nu_dc_err = fit_lorenzian(self.nus, self.acf_on, ebars=offs_std*self.ebar_scale_fac, exclude_zero=exclude_zero)
         return m, m_err, nu_dc, nu_dc_err

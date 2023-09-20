@@ -43,35 +43,49 @@ class SpectraCalculator():
         # the full time range of the FRB data
         self.time_range = (0, self.ww.shape[-1])
 
-    def plot_waterfall(self):
+    def plot_waterfall(self, ax=None):
         vmin, vmax = np.nanpercentile(self.power[~np.isnan(self.power)], [5, 95])
-        plt.imshow(self.power, aspect='auto', origin='lower', extent=[0, self.ww.shape[-1], self.freq_max, self.freq_min],
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+        ax.imshow(self.power, aspect='auto', origin='lower', extent=[0, self.ww.shape[-1], self.freq_max, self.freq_min],
                    vmin=vmin, vmax=vmax)
-        plt.vlines(self.on_range, self.freq_min, self.freq_max, colors='r', linestyles='dashed')
-        plt.xlabel('Time (frames)')
-        plt.ylabel('Frequency (MHz)')
-        plt.gca().invert_yaxis()
-        plt.show()
+        ax.vlines(self.on_range, self.freq_min, self.freq_max, colors='r', linestyles='dashed')
+        ax.set_xlim([self.on_range[0]-1000, self.on_range[1]+1000])
+        ax.set_xlabel('Time (frames)')
+        ax.set_ylabel('Frequency (MHz)')
+        ax.invert_yaxis()
+        return ax
 
-    def calc_on_range(self, ds_factor=16, floor_level=0.1, plot=False):
+    def calc_on_range(self, ds_factor=16, floor_level=0.1, plot=False, ax=None):
         '''
         Calculate the on-pulse region by obtaining the matched filter.
         '''
         flux_filt, noise = get_smooth_matched_filter(self.power, ds_factor=ds_factor, floor_level=floor_level)
         flux_filt, noise = flux_filt[0], noise[0]
         ind = np.argmax(flux_filt)
+        if flux_filt[ind] < 3*noise:
+            print('Warning: no on-pulse region found!')
+            self.on_range = (np.nan, np.nan)
+            self.l_on = np.nan
+            return None, None, None
         ind_l = np.argmin(np.abs(flux_filt[:ind] - 3*noise))
         ind_r = np.argmin(np.abs(flux_filt[ind:] - 3*noise))+ind
-        if plot:
-            plt.plot(np.nanmean(self.power, axis=0) - np.nanmean(self.power[:,:ind_l]))
-            plt.plot(flux_filt)
-            plt.hlines(3*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
-            plt.vlines([ind_l, ind_r], 0, np.max(flux_filt), colors='r', linestyles='dotted')
-            plt.xlim([ind_l-100, ind_r+100])
-            plt.show()
         self.on_range = (ind_l, ind_r)
         self.l_on = self.on_range[1] - self.on_range[0]
-        return flux_filt, noise
+        fig = None
+        if plot:
+            if ax is None:
+                fig = plt.figure()
+                ax = fig.add_subplot(111)
+            ax.plot(np.nanmean(self.power, axis=0) - np.nanmean(self.power[:,:ind_l]))
+            ax.plot(flux_filt)
+            ax.hlines(3*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
+            ax.vlines([ind_l, ind_r], 0, np.max(flux_filt), colors='r', linestyles='dotted')
+            ax.set_xlim([ind_l-100, ind_r+100])
+            ax.set_xlabel('Time (frames)')
+            ax.set_ylabel('Flux')
+        return flux_filt, noise, ax
 
     def calc_spec_off(self, do_upchannel=True, f_spec=f_spec_I, list_time_slcs=[np.s_[:]]):
         '''
@@ -94,7 +108,7 @@ class SpectraCalculator():
             f_deripple = deripple
 
         spec_offs_ = [[None] * N for _ in list_time_slcs] # for each of the N off-pulse regions, get the spectra according to the time slices
-        
+
         for j, x in enumerate(xs):
             ww = self.ww[:,:,x:x+self.l_on].copy()
             if do_upchannel:

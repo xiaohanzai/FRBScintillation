@@ -24,13 +24,13 @@ class WaterfallLoader():
         '''
         self.data_reduction_pipeline = data_reduction_pipeline
 
-    def load_data(self, fname):
-        return self.data_reduction_pipeline(fname)
+    def load_data(self, fname, **kwargs):
+        return self.data_reduction_pipeline(fname, **kwargs)
 
-def data_reduction_pipeline_chime(fname, floor_level=0.1):
+def data_reduction_pipeline_chime(fname, floor_level=0.1, **kwargs):
     data = BBData.from_file(fname)
     ww = get_dedispersed_clipped_bbdata(data, downsampling_factor=1, diagnostic_plots=False, full_output=False,
-                                        floor_level=floor_level) # shape (freq, pol, time)
+                                        floor_level=floor_level, **kwargs) # shape (freq, pol, time)
     ww[ww == 0] = np.nan
     return ww
 
