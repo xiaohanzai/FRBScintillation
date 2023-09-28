@@ -67,7 +67,7 @@ class SpectraFitter():
         self.spec_on_[:,ii] = np.nan
         self.spec_offs_[:,:,ii] = np.nan
 
-    def fit_smooth(self, use_powerlaw=False):
+    def fit_smooth(self, num_splines=50, use_powerlaw=False):
         '''
         Fit a smooth spectrum for spec_on and each of spec_offs.
         If use_powerlaw is True, then fit a power-law spectrum.  Otherwise fit spline.
@@ -76,8 +76,8 @@ class SpectraFitter():
 
         spec_on_ = self.spec_on_*1.
         spec_offs_ = self.spec_offs_*1.
-        def f_fit(spec, *args, **kwargs):
-            spec_smooth = fit_spline(spec)
+        def f_fit(spec, num_splines=num_splines, **kwargs):
+            spec_smooth = fit_spline(spec, num_splines=num_splines)
             return spec_smooth
         if use_powerlaw:
             tmp = np.nanmean(self.spec_offs_, axis=1)
@@ -93,7 +93,7 @@ class SpectraFitter():
         spec_smooth_on_ = spec_on_*0.
         spec_smooth_offs_ = spec_offs_*0.
         for i in range(spec_on_.shape[0]):
-            spec_smooth_on_[i] = f_fit(spec_on_[i], print_coeffs=True)
+            spec_smooth_on_[i] = f_fit(spec_on_[i], num_splines=num_splines, print_coeffs=True)
             for j in range(spec_offs_.shape[1]):
                 spec_smooth_offs_[i,j] = f_fit(spec_offs_[i,j])
 

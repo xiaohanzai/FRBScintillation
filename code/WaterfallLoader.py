@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from baseband_analysis.core.bbdata import BBData
-from baseband_analysis.dev.lensing import get_dedispersed_clipped_bbdata
+# from baseband_analysis.dev.lensing import get_dedispersed_clipped_bbdata
 from baseband_analysis.core.dedispersion import delay_across_the_band
+from data_reduction_functions import dedisperse_and_normalize_bbdata
 # from baseband_analysis.analysis.snr import get_snr
 # from baseband_analysis.core.sampling import fill_waterfall, clip
 # from baseband_analysis.core.signal import get_main_peak_lim, tiedbeam_baseband_to_power, get_weights, squarewave_pattern_index, get_onsource_beam
@@ -24,13 +25,12 @@ class WaterfallLoader():
         '''
         self.data_reduction_pipeline = data_reduction_pipeline
 
-    def load_data(self, fname, **kwargs):
-        return self.data_reduction_pipeline(fname, **kwargs)
+    def load_data(self, fname, DM, **kwargs):
+        return self.data_reduction_pipeline(fname, DM, **kwargs)
 
-def data_reduction_pipeline_chime(fname, floor_level=0.1, **kwargs):
+def data_reduction_pipeline_chime(fname, DM, time_shift=True, **kwargs):
     data = BBData.from_file(fname)
-    ww = get_dedispersed_clipped_bbdata(data, downsampling_factor=1, diagnostic_plots=False, full_output=False,
-                                        floor_level=floor_level, **kwargs) # shape (freq, pol, time)
+    ww = dedisperse_and_normalize_bbdata(data, DM=DM, time_shift=time_shift, **kwargs) # shape (freq, pol, time)
     ww[ww == 0] = np.nan
     return ww
 

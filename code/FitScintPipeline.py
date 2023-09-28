@@ -40,26 +40,28 @@ class FitScintPipeline():
     def __init__(self, data_reduction_pipeline):
         self.wfloader = WaterfallLoader(data_reduction_pipeline)
 
-    def load_ww(self, fname, **kwargs):
+    def load_ww(self, fname, DM, **kwargs):
         try:
-            ww = self.wfloader.load_data(fname, **kwargs)
+            ww = self.wfloader.load_data(fname, DM, **kwargs)
             return ww
         except:
             chime_id = fname[fname.rindex('/'):-3]
             print('something wrong with', chime_id)
             return None
 
-    def calc_spec(self, ww, list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
-                plot=True, save_path='', save_plot=False, return_all=False):
+    def calc_spec(self, ww, freqs=None, n_noise=1,
+                list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
+                plot=True, save_path='', save_plot=False, return_all=False,
+                calc_deripple_arr=False, fftsize=32, downfreq=2):
         ax1 = ax2 = None
         if plot:
             fig, axes = plt.subplots(figsize=(12,6), nrows=1, ncols=2)
             ax1 = axes[0]
             ax2 = axes[1]
         # prepare to calculate spectra
-        spec_calculator = SpectraCalculator(ww)
+        spec_calculator = SpectraCalculator(ww, freqs=freqs)
         # calculate on range
-        spec_calculator.calc_on_range(plot=plot, ax=ax2)
+        spec_calculator.calc_on_range(plot=plot, ax=ax2, n_noise=n_noise)
         if np.isnan(spec_calculator.l_on):
             return None, None, None
         # plot waterfall
@@ -68,21 +70,27 @@ class FitScintPipeline():
             if save_plot:
                 fig.savefig(save_path + '/matched_filtering.png')
             plt.show()
+        # calculate new deripple array if required
+        deripple_arr = None
+        if calc_deripple_arr:
+            deripple_arr = spec_calculator.calc_deripple_arr(fftsize=fftsize, downfreq=downfreq)
         # calculate on-pulse and off-pulse spectra
-        spec_on_, freqs = spec_calculator.calc_spec_on(list_time_slcs=list_time_slcs)
-        spec_offs_, freqs = spec_calculator.calc_spec_off(list_time_slcs=list_time_slcs)
+        spec_on_, freqs_new = spec_calculator.calc_spec_on(list_time_slcs=list_time_slcs, deripple_arr=deripple_arr,
+                                                        fftsize=fftsize, downfreq=downfreq)
+        spec_offs_, freqs_new = spec_calculator.calc_spec_off(list_time_slcs=list_time_slcs, deripple_arr=deripple_arr,
+                                                        fftsize=fftsize, downfreq=downfreq)
         if return_all:
-            return spec_calculator, spec_on_, spec_offs_, freqs
-        return spec_on_, spec_offs_, freqs
+            return spec_calculator, spec_on_, spec_offs_, freqs_new
+        return spec_on_, spec_offs_, freqs_new
 
-    def fit_spec(self, spec_on_, spec_offs_, freqs,
+    def fit_spec(self, spec_on_, spec_offs_, freqs, num_splines=50,
                 plot=True, save_path='', save_plot=False, return_all=False):
         # prepare to fit smooth spectra
         spec_fitter = SpectraFitter(spec_on_, spec_offs_, freqs)
         # clean RFI
         spec_fitter.clean_rfi_3sigma()
         # fit smooth
-        spec_smooth_on_, spec_smooth_offs_ = spec_fitter.fit_smooth()
+        spec_smooth_on_, spec_smooth_offs_ = spec_fitter.fit_smooth(num_splines=num_splines)
         # diagnostic plots
         if plot:
             fig, axes = plt.subplots(figsize=(15,5), nrows=1, ncols=3)
@@ -212,7 +220,7 @@ class FitScintPipeline():
     def run(self, fname, out_path, list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
             time_slc_i=1, time_slc_j=2, freq_bins=np.stack((np.arange(400,790,50),np.arange(450,810,50))).T, dump=True):
         # load waterfall data
-        ww = self.load_ww(fname)
+        ww, freqs = self.load_ww(fname)
         if ww is None:
             return
 
@@ -222,7 +230,7 @@ class FitScintPipeline():
             os.mkdir(save_path)
 
         # calculate spectra
-        spec_on_, spec_offs_, freqs = self.calc_spec(ww, list_time_slcs=list_time_slcs,
+        spec_on_, spec_offs_, freqs = self.calc_spec(ww, freqs, list_time_slcs=list_time_slcs,
                                                     plot=True, save_path=save_path, save_plot=True)
         if spec_on_ is None:
             return
