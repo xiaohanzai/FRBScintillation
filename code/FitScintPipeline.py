@@ -41,18 +41,13 @@ class FitScintPipeline():
         self.wfloader = WaterfallLoader(data_reduction_pipeline)
 
     def load_ww(self, fname, DM, **kwargs):
-        try:
-            ww = self.wfloader.load_data(fname, DM, **kwargs)
-            return ww
-        except:
-            chime_id = fname[fname.rindex('/'):-3]
-            print('something wrong with', chime_id)
-            return None
+        ww = self.wfloader.load_data(fname, DM, **kwargs)
+        return ww
 
-    def calc_spec(self, ww, freqs=None, n_noise=1,
+    def calc_spec(self, ww, freqs=None, n_noise=3,
                 list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
                 plot=True, save_path='', save_plot=False, return_all=False,
-                calc_deripple_arr=False, fftsize=32, downfreq=2):
+                calc_deripple_arr=False, fftsize=32, downfreq=2, **kwargs):
         ax1 = ax2 = None
         if plot:
             fig, axes = plt.subplots(figsize=(12,6), nrows=1, ncols=2)
@@ -84,7 +79,7 @@ class FitScintPipeline():
         return spec_on_, spec_offs_, freqs_new
 
     def fit_spec(self, spec_on_, spec_offs_, freqs, num_splines=50,
-                plot=True, save_path='', save_plot=False, return_all=False):
+                plot=True, save_path='', save_plot=False, return_all=False, **kwargs):
         # prepare to fit smooth spectra
         spec_fitter = SpectraFitter(spec_on_, spec_offs_, freqs)
         # clean RFI
@@ -135,13 +130,12 @@ class FitScintPipeline():
             return acf_calculator, acf_on, acf_offs, nus
         return acf_on, acf_offs, nus
 
-    def fit_acf(self, acf_on, acf_offs, nus, ebar_scale_fac=1.):
+    def fit_acf(self, acf_on, acf_offs, nus, ebar_scale_fac=1., exclude_zero=False):
         acf_fitter = ACFFitter(acf_on, acf_offs, nus, ebar_scale_fac=ebar_scale_fac)
-        m, m_err, nu_dc, nu_dc_err = acf_fitter.fit_acf()
+        m, m_err, nu_dc, nu_dc_err = acf_fitter.fit_acf(exclude_zero=exclude_zero)
         return m, m_err, nu_dc, nu_dc_err
 
-    def plot_acf(self, nus, acf_on, m, nu_dc, y_offset=0., label=None, acf_offs=None, axes=None,
-                save_plot=False, save_path=''):
+    def plot_acf(self, nus, acf_on, m, nu_dc, y_offset=0., label=None, acf_offs=None, axes=None):
         if axes is None:
             fig, axes = plt.subplots(figsize=(10,5), nrows=1, ncols=2)
         if acf_offs is not None:
@@ -172,12 +166,11 @@ class FitScintPipeline():
         axes[1].set_xscale('log')
         axes[1].set_xlim(None, 2)
         axes[0].legend(loc=1)
-        if save_plot:
-            fig.savefig(save_path + '/fit_acf.png')
         return axes
 
     def calc_and_fit_acf(self, dspec_on_, dspec_offs_, freqs, time_slc_i, time_slc_j, ebar_scale_fac=1.,
-                freq_bins=[[400,500],[500,600]], plot=True, save_path='', save_plot=False):
+                freq_bins=[[400,500],[500,600]], plot=True, save_path='', save_plot=False,
+                exclude_zero=False, **kwargs):
         # prepare to calculate ACFs
         acf_calculator = ACFCalculator(dspec_on_, dspec_offs_, freqs)
         # and plot results
@@ -193,11 +186,12 @@ class FitScintPipeline():
             freq_bin = freq_bins[i]
             acf_on, acf_offs, nus = self.calc_acf(time_slc_i, time_slc_j, freq_bin[0], freq_bin[1], acf_calculator=acf_calculator)
             # fit ACF
-            ms[i], m_errs[i], nu_dcs[i], nu_dc_errs[i] = self.fit_acf(acf_on, acf_offs, nus, ebar_scale_fac=ebar_scale_fac)
+            ms[i], m_errs[i], nu_dcs[i], nu_dc_errs[i] = self.fit_acf(acf_on, acf_offs, nus, ebar_scale_fac=ebar_scale_fac,
+                                                                    exclude_zero=exclude_zero)
             # plot
             if plot:
                 self.plot_acf(nus, acf_on, ms[i], nu_dcs[i], y_offset=i*0.2, label=f'{freq_bin[0]}-{freq_bin[1]} MHz',
-                            acf_offs=acf_offs, axes=axes, save_plot=False)
+                            acf_offs=acf_offs, axes=axes)
                 if i == 0:
                     ylim[0] = axes[0].get_ylim()[0]
                 if i == N-1:
@@ -217,34 +211,40 @@ class FitScintPipeline():
 
         return nus, acf_on_, acf_offs_, ms, m_errs, nu_dcs, nu_dc_errs
 
-    def run(self, fname, out_path, list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
-            time_slc_i=1, time_slc_j=2, freq_bins=np.stack((np.arange(400,790,50),np.arange(450,810,50))).T, dump=True):
-        # load waterfall data
-        ww, freqs = self.load_ww(fname)
-        if ww is None:
-            return
-
+    def run(self, fname, DM, out_path, freqs_orig=None, list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
+            time_slc_i=1, time_slc_j=2, freq_bins=np.stack((np.arange(400,790,50),np.arange(450,810,50))).T, dump=True,
+            **kwargs):
         # create dir to save all diagnostic plots and data
         save_path = out_path + '/' + fname[fname.rindex('/'):-3]
         if not os.path.exists(save_path):
             os.mkdir(save_path)
 
+        # load waterfall data
+        ww = self.load_ww(fname, DM, save_path=save_path, save_plot=True, interactive=False, **kwargs)
+        if ww is None:
+            return
+
         # calculate spectra
-        spec_on_, spec_offs_, freqs = self.calc_spec(ww, freqs, list_time_slcs=list_time_slcs,
-                                                    plot=True, save_path=save_path, save_plot=True)
+        spec_on_, spec_offs_, freqs = self.calc_spec(ww, freqs=freqs_orig, list_time_slcs=list_time_slcs,
+                                                    plot=True, save_path=save_path, save_plot=True, **kwargs)
         if spec_on_ is None:
             return
 
         # fit smooth spectra
         spec_smooth_on_, spec_smooth_offs_ = self.fit_spec(spec_on_, spec_offs_, freqs,
-                                                    plot=True, save_path=save_path, save_plot=True)
+                                                    plot=True, save_path=save_path, save_plot=True, **kwargs)
 
         # calculate and fit ACFs
-        ebar_scale_fac = np.nanmean(spec_smooth_on_)/np.nanmean(spec_smooth_offs_)
+        ebar_scale_fac = np.nanmean(spec_smooth_on_[0])/np.nanmean(spec_smooth_offs_[0])
         nus, acf_on_, acf_offs_, ms, m_errs, nu_dcs, nu_dc_errs = self.calc_and_fit_acf(
             spec_on_/spec_smooth_on_-1, spec_offs_/spec_smooth_offs_-1, freqs, time_slc_i, time_slc_j,
             ebar_scale_fac=ebar_scale_fac, freq_bins=freq_bins,
-            plot=True, save_path=save_path, save_plot=True)
+            plot=True, save_path=save_path, save_plot=True, **kwargs)
+        nus, acf_on0_, acf_offs0_, ms0, m_errs0, nu_dcs0, nu_dc_errs0 = self.calc_and_fit_acf(
+            spec_on_/spec_smooth_on_-1, spec_offs_/spec_smooth_offs_-1, freqs, 0, 0,
+            ebar_scale_fac=ebar_scale_fac, freq_bins=freq_bins,
+            plot=True, save_path=save_path, save_plot=False, exclude_zero=True, **kwargs)
+        print('mod indices from cross corr vs autocorr:', ms, ms0)
 
         # save results
         if dump:
@@ -257,13 +257,19 @@ class FitScintPipeline():
                 pickle.dump(rst_specs, f)
             rst_acfs = {
                 'freq_bins': freq_bins,
+                'nus': nus,
                 'acf_on_': acf_on_,
                 'acf_offs_': acf_offs_,
-                'nus': nus,
                 'ms': ms,
                 'm_errs': m_errs,
                 'nu_dcs': nu_dcs,
                 'nu_dc_errs': nu_dc_errs,
+                'acf_on0_': acf_on0_,
+                'acf_offs0_': acf_offs0_,
+                'ms0': ms0,
+                'm_errs0': m_errs0,
+                'nu_dcs0': nu_dcs0,
+                'nu_dc_errs0': nu_dc_errs0,
             }
             with open(save_path + '/acfs.pkl', 'wb') as f:
                 pickle.dump(rst_acfs, f)

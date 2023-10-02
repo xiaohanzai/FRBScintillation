@@ -33,7 +33,7 @@ def calc_deripple_arr(ww, fftsize=32, downfreq=2):
     offset, weight = get_weights_(flux)
     # show diagnostic plot
     plt.plot(flux)
-    plt.axvline(offset, color='k', linestyle='dashed')
+    plt.axhline(y=offset, color='k', linestyle='dashed')
     plt.ylim(offset-2/weight, offset+2/weight)
     plt.show()
 

@@ -34,7 +34,7 @@ def data_reduction_pipeline_chime(fname, DM, time_shift=True, **kwargs):
     ww[ww == 0] = np.nan
     return ww
 
-def data_reduction_pipeline_masui(fname):
+def data_reduction_pipeline_masui(fname, *args, **kwargs):
     # fname is either filtered_short or filtered
     path = '/arc/home/xiaohanwu/scintillation/data/Masui15data/'
     postfix = ''

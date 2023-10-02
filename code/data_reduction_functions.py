@@ -130,20 +130,31 @@ def clip_data(bbdata, valid_span_power_bins, DM):
     )
     return data_clipped
 
-def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=True, time_shift=True):
+def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=True, time_shift=True,
+                                    plot=True, save_path='', save_plot=False):
     """
     given a bbdata, dedisperse and normalize it
     output the data (RFI zapped, missing channels filled, derippled, coherent dedispersed),
       the frequencies and frequency channel IDs
     """
     # freq_id, freq, power, offset, weight, valid_channels_out, time_range_out, DM_out, downsampling_factor = get_snr(...)
-    output = get_snr(bbdata, DM=DM, DM_range=None, diagnostic_plots=True, return_full=True,
+    try:
+        output = get_snr(bbdata, DM=DM, DM_range=None, diagnostic_plots=True, return_full=True,
                             downsample=downsample_factor, spectrum_lim=False)
-    valid_channels = output[5]
-    valid_span_power_bins = output[6]
+        valid_channels = output[5]
+        valid_span_power_bins = output[6]
+        if DM is None: # in case input DM is None
+            DM = output[7]
+    except:
+        print('get_snr failed')
+        return
 
     # clip
-    bbdata = clip_data(bbdata, valid_span_power_bins, DM)
+    try:
+        bbdata = clip_data(bbdata, valid_span_power_bins, DM)
+    except:
+        print('clip_data failed')
+        return
 
     # dedisperse
     data = coherent_dedisp(bbdata, DM, time_shift=time_shift)
@@ -160,11 +171,14 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
         plt.show()
         answer = input(f'Please define the bin range to use for the off burst statistics (beginbin,endbin), reference {st_tbin}, {end_tbin}, {nanind}: ')
         answer = answer.split(',')
+        offpulse_range = [int(answer[0]), int(answer[1])]
     else:
-        answer=[0, st_tbin]
+        offpulse_range = [0, st_tbin] # usually prefer this range
+        if st_tbin < nanind - end_tbin: # but in case st_tbin is too close to 0
+            offpulse_range = [end_tbin, nanind]
 
     # subtract mean and divide by std per channel
-    data = normalize_data(data, data[:,:,int(answer[0])*downsample_factor:int(answer[1])*downsample_factor])
+    data = normalize_data(data, data[:,:,offpulse_range[0]*downsample_factor:offpulse_range[1]*downsample_factor])
 
     # get rid of invalid channels as determined by get_snr
     data[~valid_channels] = 0
@@ -195,13 +209,18 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
     data[data==0] = np.nan
 
     # show how we did
-    if interactive:
+    if plot:
         Iscr = scrunch(np.sum(np.abs(data)**2, axis=1), tscrunch=downsample_factor, fscrunch=1)
+        vmin, vmax = np.nanpercentile(Iscr, [5, 95])
         plt.figure(figsize=(6,10))
         plt.subplot(211)
-        plt.imshow(Iscr,aspect='auto')
+        plt.imshow(Iscr, vmin=vmin, vmax=vmax, aspect='auto')
         plt.subplot(212)
-        plt.plot(np.nanmean(Iscr,axis=0))
+        plt.plot(np.nanmean(Iscr, axis=0))
+        plt.axvline(x=offpulse_range[0], color='k', linestyle='--')
+        plt.axvline(x=offpulse_range[1], color='k', linestyle='--')
+        if save_plot:
+            plt.savefig(save_path + '/dedispersed_data.png')
         plt.show()
 
     return data
