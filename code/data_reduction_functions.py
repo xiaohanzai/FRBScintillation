@@ -130,8 +130,8 @@ def clip_data(bbdata, valid_span_power_bins, DM):
     )
     return data_clipped
 
-def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=True, time_shift=True,
-                                    plot=True, save_path='', save_plot=False):
+def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=False, time_shift=True,
+                                    plot=True, save_path='', save_plot=False, **kwargs):
     """
     given a bbdata, dedisperse and normalize it
     output the data (RFI zapped, missing channels filled, derippled, coherent dedispersed),
@@ -165,6 +165,8 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
     nanind = np.where(np.isnan(Iscr[-1]))[0]
     if len(nanind) == 0:
         nanind = Iscr.shape[1]
+    else:
+        nanind = nanind[0]
     st_tbin, end_tbin = get_main_peak_lim(Iscr[:,:nanind+500], diagnostic_plots=False, normalize_profile=True)
     if interactive:
         plt.plot(np.nanmean(Iscr, axis=0))
@@ -207,6 +209,13 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
 
     # TODO: I still think missing data should be nan's, not 0's
     data[data==0] = np.nan
+    # but if there's nan's somewhere along the time axis, set to 0 (for now)
+    for i in range(data.shape[0]):
+        ii = np.isnan(data[i,0,:])
+        n = ii.sum()
+        if n != 0 and n != data.shape[-1]:
+            print('NaNs found at freq', i, np.where(ii)[0][0], n)
+            data[i,:,ii] = 0
 
     # show how we did
     if plot:

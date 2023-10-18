@@ -104,6 +104,8 @@ class SpectraCalculator():
             self.l_on = np.nan
             return None, None, None
         ind_l = np.argmin(np.abs(flux_filt[:ind] - n_noise*noise))
+        if ind_l < self.on_range[0] - 500:
+            ind_l = self.on_range[0] # use get_main_peak_lim() estimate instead
         ind_r = np.argmin(np.abs(flux_filt[ind:] - n_noise*noise))+ind
         self.on_range = (ind_l, ind_r)
         self.l_on = self.on_range[1] - self.on_range[0]
