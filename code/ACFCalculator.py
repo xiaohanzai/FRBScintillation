@@ -20,8 +20,9 @@ def f_corr(xs, ys=None, xweights=None, yweights=None):
         corr = np.array([np.nansum(wxs[:,i:] * wys[:,:xs.shape[1]-i], axis=1) for i in range(xs.shape[1])]).T
         norm = np.array([np.nansum(xweights[:,i:] * yweights[:,:xs.shape[1]-i], axis=1) for i in range(xs.shape[1])]).T
     # TODO: not sure if this the best protection mechanism
-    if norm.max() / xs.shape[-1] < 1e-3:
-        return np.zeros_like(corr)
+    # if norm.max() / xs.shape[-1] < 1e-3:
+    #     print()
+    #     return np.zeros_like(corr)
     return corr / norm
 
 class ACFCalculator():

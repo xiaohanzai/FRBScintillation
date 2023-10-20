@@ -161,15 +161,15 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
 
     # identify off burst region to use
     I = np.sum(np.abs(data)**2, axis=1)
-    Iscr = scrunch(I, tscrunch=downsample_factor, fscrunch=1)
-    nanind = np.where(np.isnan(Iscr[-1]))[0]
+    Iscr0 = scrunch(I, tscrunch=downsample_factor, fscrunch=1)
+    nanind = np.where(np.isnan(Iscr0[-1]))[0]
     if len(nanind) == 0:
-        nanind = Iscr.shape[1]
+        nanind = Iscr0.shape[1]
     else:
         nanind = nanind[0]
-    st_tbin, end_tbin = get_main_peak_lim(Iscr[:,:nanind+500], diagnostic_plots=False, normalize_profile=True)
+    st_tbin, end_tbin = get_main_peak_lim(Iscr0[:,:nanind+500], diagnostic_plots=False, normalize_profile=True)
     if interactive:
-        plt.plot(np.nanmean(Iscr, axis=0))
+        plt.plot(np.nanmean(Iscr0, axis=0))
         plt.show()
         answer = input(f'Please define the bin range to use for the off burst statistics (beginbin,endbin), reference {st_tbin}, {end_tbin}, {nanind}: ')
         answer = answer.split(',')
@@ -221,10 +221,15 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
     if plot:
         Iscr = scrunch(np.sum(np.abs(data)**2, axis=1), tscrunch=downsample_factor, fscrunch=1)
         vmin, vmax = np.nanpercentile(Iscr, [5, 95])
-        plt.figure(figsize=(6,10))
-        plt.subplot(211)
+        fig = plt.figure(figsize=(6,15))
+        fig.subplots_adjust(left=0.15, right=0.95, bottom=0.05, top=0.95)
+        plt.subplot(311)
         plt.imshow(Iscr, vmin=vmin, vmax=vmax, aspect='auto')
-        plt.subplot(212)
+        plt.subplot(312)
+        plt.plot(np.nanmean(Iscr0, axis=0))
+        plt.axvline(x=offpulse_range[0], color='k', linestyle='--')
+        plt.axvline(x=offpulse_range[1], color='k', linestyle='--')
+        plt.subplot(313)
         plt.plot(np.nanmean(Iscr, axis=0))
         plt.axvline(x=offpulse_range[0], color='k', linestyle='--')
         plt.axvline(x=offpulse_range[1], color='k', linestyle='--')
@@ -232,7 +237,9 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
             plt.savefig(save_path + '/dedispersed_data.png')
         plt.show()
 
-    return data
+    offpulse_range[0] *= downsample_factor
+    offpulse_range[1] *= downsample_factor
+    return data, offpulse_range
 
 def fill_missing_chans(data, freq_id, freqs):
     """

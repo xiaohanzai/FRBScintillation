@@ -1,10 +1,11 @@
 import numpy as np
+import json
 import matplotlib.pyplot as plt
 import pickle
 import os
 import glob
 from WaterfallLoader import WaterfallLoader, data_reduction_pipeline_chime
-from SpectraCalculator import SpectraCalculator
+from SpectraCalculator import SpectraCalculator, plot_on_range
 from SpectraFitter import SpectraFitter
 from ACFCalculator import ACFCalculator
 from ACFFitter import ACFFitter, f_lorenzian
@@ -41,28 +42,23 @@ class FitScintPipeline():
         self.wfloader = WaterfallLoader(data_reduction_pipeline)
 
     def load_ww(self, fname, DM, **kwargs):
-        ww = self.wfloader.load_data(fname, DM, **kwargs)
-        return ww
+        ww, offpulse_range = self.wfloader.load_data(fname, DM, **kwargs)
+        return ww, offpulse_range
 
-    def calc_spec(self, ww, freqs=None, n_noise=3,
+    def calc_spec(self, ww, offpulse_range, freqs=None, n_noise=3,
                 list_time_slcs=[np.s_[:], np.s_[::2], np.s_[1::2]],
                 plot=True, save_path='', save_plot=False, return_all=False,
-                calc_deripple_arr=False, fftsize=32, downfreq=2, **kwargs):
-        ax1 = ax2 = None
+                calc_deripple_arr=False, fftsize=32, downfreq=2, interactive=False, **kwargs):
+        # prepare to calculate spectra
+        spec_calculator = SpectraCalculator(ww, offpulse_range, freqs=freqs)
+        # calculate on-range
+        spec_calculator.calc_on_range(n_noise=n_noise, interactive=interactive) # n_noise won't be useful anymore actually
+        # plot waterfall and on-range
         if plot:
             fig, axes = plt.subplots(figsize=(12,6), nrows=1, ncols=2)
             fig.subplots_adjust(left=0.1, right=0.95, bottom=0.1, top=0.95, wspace=0.3)
-            ax1 = axes[0]
-            ax2 = axes[1]
-        # prepare to calculate spectra
-        spec_calculator = SpectraCalculator(ww, freqs=freqs)
-        # calculate on range
-        spec_calculator.calc_on_range(plot=plot, ax=ax2, n_noise=n_noise)
-        if np.isnan(spec_calculator.l_on):
-            return None, None, None
-        # plot waterfall
-        if plot:
-            spec_calculator.plot_waterfall(ax=ax1)
+            plot_on_range(spec_calculator.power, spec_calculator.filter, spec_calculator.on_range, axes[1])
+            spec_calculator.plot_waterfall(ax=axes[0])
             if save_plot:
                 fig.savefig(save_path + '/matched_filtering.png')
             plt.show()
@@ -233,12 +229,12 @@ class FitScintPipeline():
             os.mkdir(save_path)
 
         # load waterfall data
-        ww = self.load_ww(fname, DM, save_path=save_path, save_plot=save_plot, **kwargs)
+        ww, offpulse_range = self.load_ww(fname, DM, save_path=save_path, save_plot=save_plot, **kwargs)
         if ww is None:
             return
 
         # calculate spectra
-        spec_on_, spec_offs_, freqs = self.calc_spec(ww, freqs=freqs_orig, list_time_slcs=list_time_slcs,
+        spec_on_, spec_offs_, freqs = self.calc_spec(ww, offpulse_range, freqs=freqs_orig, list_time_slcs=list_time_slcs,
                                                     plot=True, save_path=save_path, save_plot=save_plot, **kwargs)
         if spec_on_ is None:
             return
@@ -262,7 +258,8 @@ class FitScintPipeline():
             dspec_on_, dspec_offs_, freqs, 0, 0,
             ebar_scale_fac=ebar_scale_fac, freq_bins=freq_bins,
             plot=True, save_path=save_path, save_plot=False, exclude_zero=False, **kwargs)
-        print('mod indices from cross corr vs autocorr:', ms, ms0)
+        # print('mod indices from cross corr vs autocorr:', ms, ms0)
+        print('mod indices and error-bars:', ms, m_errs)
 
         # save results
         if dump:
@@ -292,14 +289,22 @@ class FitScintPipeline():
             with open(save_path + '/acfs.pkl', 'wb') as f:
                 pickle.dump(rst_acfs, f)
 
+def get_fitburst_dm(frb_id, fitburst_path='/arc/projects/chime_frb/Basecat_morph/fitburst_run_ketan/'):
+    data = json.load(open(fitburst_path + f'/{frb_id}/results_fitburst_{frb_id}.json', 'r'))
+    return data['initial_dm'] + data['model_parameters']['dm'][0]
+
 def main():
     path = '/arc/projects/chime_frb/baseband_catalog/beamformed_files/'
-    fnames = glob.glob(path + 'singlebeam*.h5')
+    fnames = glob.glob(path + '*.h5')
 
     out_path = '/arc/projects/chime_frb/xiaohan/scintillation'
     fit_scint_pipeline = FitScintPipeline(data_reduction_pipeline_chime)
+
+    frb_id = '24365582'
     for fname in fnames:
-        fit_scint_pipeline.run(fname, out_path)
+        if frb_id in fname:
+            break
+    fit_scint_pipeline.run(fname, DM=get_fitburst_dm(frb_id), out_path=out_path, interactive=False)
 
 if __name__ == '__main__':
     main()

@@ -1,13 +1,15 @@
 import numpy as np
+import scipy.signal
 import matplotlib.pyplot as plt
 from scipy.fft import irfft, rfft, rfftfreq
 from baseband_analysis.core.sampling import _upchannel as upchannel 
+from baseband_analysis.core.sampling import scrunch
 from baseband_analysis.core.signal import get_main_peak_lim
 from chime_frb_constants import FREQ_BOTTOM_MHZ, FREQ_TOP_MHZ
 from data_reduction_functions import get_weights_
 
 f_spec_I = lambda ww: np.sum(np.abs(ww)**2, axis=(1,2)) # Stokes I from baseband data
-f_power = lambda ww: np.nansum(np.abs(ww)**2, axis=1) # total intensity from baseband data
+f_power = lambda ww: np.sum(np.abs(ww)**2, axis=1) # total intensity from baseband data
 
 def calc_spec(ww, time_slc, f_spec=f_spec_I):
     '''
@@ -56,9 +58,27 @@ def deripple(spectra, deripple_arr=None):
     spectra = np.multiply(spectra, 1/big_fix)
     return spectra
 
+def plot_on_range(power, filter, on_range, ax=None):
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+    ind_l, ind_r = on_range
+    flux = np.nanmean(power, axis=0) - np.nanmean(power[:,:ind_l])
+    ax.plot(flux)
+    flux_filt = np.zeros(power.shape[-1])
+    flux_filt[ind_l:ind_r] = filter
+    flux_filt *= flux.max() / flux_filt.max()
+    ax.plot(flux_filt)
+    # ax.hlines(2*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
+    ax.vlines([ind_l, ind_r], 0, np.max(flux_filt), colors='r', linestyles='dotted')
+    ax.set_xlim([ind_l-1000, ind_r+1000])
+    ax.set_xlabel('Time (frames)')
+    ax.set_ylabel('Flux')
+
 class SpectraCalculator():
-    def __init__(self, ww, freqs=None, f_power=f_power):
+    def __init__(self, ww, offpulse_range, freqs=None, f_power=f_power):
         self.ww = ww.copy()
+        self.offpulse_range = offpulse_range # the off-pulse range used for noise estimation etc.
 
         if freqs is None:
             self.freqs = np.linspace(FREQ_BOTTOM_MHZ, FREQ_TOP_MHZ, ww.shape[0])
@@ -72,8 +92,12 @@ class SpectraCalculator():
 
         # a rough estimate of the on-pulse region; need to call calc_on_range() to get a better estimate
         self.on_range = get_main_peak_lim(self.power, floor_level=0.1, diagnostic_plots=False, normalize_profile=True)
-        # length of the on-range
-        self.l_on = self.on_range[1] - self.on_range[0]
+        self.on_ranges = [self.on_range] # allow for multiple components
+        # height of the on-range regions; need it to define filters
+        self.h_ons = [1.]
+        # construct a boxcar filter for later use
+        self.filter = construct_filter_of_boxcars(self.on_ranges, self.h_ons)
+
         # the full time range of the FRB data
         self.time_range = (0, self.ww.shape[-1])
 
@@ -91,37 +115,71 @@ class SpectraCalculator():
         ax.invert_yaxis()
         return ax
 
-    def calc_on_range(self, n_noise=3, ds_factor=16, floor_level=0.1, plot=False, ax=None):
+    def calc_on_range(self, ds_factor=16, interactive=False, n_noise=3, floor_level=0, **kwargs):
         '''
-        Calculate the on-pulse region by obtaining the matched filter.
+        Calculate the on-pulse region.
         '''
-        flux_filt, noise = get_smooth_matched_filter(self.power, ds_factor=ds_factor, floor_level=floor_level)
-        flux_filt, noise = flux_filt[0], noise[0]
-        ind = np.argmax(flux_filt)
-        if flux_filt[ind] < n_noise*noise:
-            print('Warning: no on-pulse region found!')
-            self.on_range = (np.nan, np.nan)
-            self.l_on = np.nan
-            return None, None, None
-        ind_l = np.argmin(np.abs(flux_filt[:ind] - n_noise*noise))
-        if ind_l < self.on_range[0] - 500:
-            ind_l = self.on_range[0] # use get_main_peak_lim() estimate instead
-        ind_r = np.argmin(np.abs(flux_filt[ind:] - n_noise*noise))+ind
-        self.on_range = (ind_l, ind_r)
-        self.l_on = self.on_range[1] - self.on_range[0]
-        fig = None
-        if plot:
-            if ax is None:
-                fig = plt.figure()
-                ax = fig.add_subplot(111)
-            ax.plot(np.nanmean(self.power, axis=0) - np.nanmean(self.power[:,:ind_l]))
-            ax.plot(flux_filt)
-            ax.hlines(n_noise*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
-            ax.vlines([ind_l, ind_r], 0, np.max(flux_filt), colors='r', linestyles='dotted')
-            ax.set_xlim([ind_l-100, ind_r+100])
-            ax.set_xlabel('Time (frames)')
-            ax.set_ylabel('Flux')
-        return flux_filt, noise, ax
+        ## the old method
+        # flux_filt, noise = get_smooth_matched_filter(self.power, ds_factor=ds_factor, floor_level=floor_level)
+        # flux_filt, noise = flux_filt[0], noise[0]
+        # ind = np.argmax(flux_filt)
+        # if flux_filt[ind] < n_noise*noise:
+        #     print('Warning: no on-pulse region found!')
+        #     self.on_range = (np.nan, np.nan)
+        #     self.l_on = np.nan
+        #     return None, None, None
+        # ind_l = np.argmin(np.abs(flux_filt[:ind] - n_noise*noise))
+        # if ind_l < self.on_range[0] - 500:
+        #     ind_l = self.on_range[0] # use get_main_peak_lim() estimate instead
+        # ind_r = np.argmin(np.abs(flux_filt[ind:] - n_noise*noise))+ind
+
+        noise = np.nanmean(self.power[:,self.offpulse_range[0]:self.offpulse_range[1]])
+        flux_filt = np.nanmean(scrunch(self.power, tscrunch=ds_factor, fscrunch=1), axis=0) - noise
+
+        ## use convolution with the boxcar kernel to determine on-pulse range
+        ts = np.nanmean(self.power, axis=0) - noise
+        if not interactive:
+            peak, width, _ = find_burst(ts, max_width=(self.on_range[1]-self.on_range[0])*2)
+            ind_l = peak - width//2
+            ind_r = peak + width//2 + 1
+            self.on_range = [ind_l, ind_r]
+            self.on_ranges = [self.on_range]
+            self.h_ons = [1.]
+        else:
+            _, axes = plt.subplots(nrows=1, ncols=2, figsize=(12,6))
+            for ax in axes:
+                ax.plot(ts)
+                ax.plot(np.arange(len(flux_filt)) * ds_factor + ds_factor/2, flux_filt)
+            # zoom in on the second subplot
+            axes[1].set_xlim(self.on_range[0]-1000, self.on_range[1]+1000)
+            plt.show()
+            i = 0
+            while True:
+                answer = input('Please define a region (beginbin,endbin) to find a pulse : ')
+                answer = answer.split(',')
+                answer[0] = int(answer[0])
+                answer[1] = min(int(answer[1]), len(ts))
+                peak, width, snr = find_burst(ts[answer[0]:answer[1]], max_width=answer[1]-answer[0])
+                ind_l = peak - width//2 + answer[0]
+                ind_r = peak + width//2 + 1 + answer[0]
+                if i < len(self.on_ranges):
+                    self.on_ranges[i] = (ind_l, ind_r)
+                    self.h_ons[i] = snr # can try different values
+                else:
+                    self.on_ranges.append((ind_l, ind_r))
+                    self.h_ons.append(snr)
+                i += 1
+                answer = input('Do you want to work on another component? (y/n): ')
+                if answer == 'n':
+                    break
+            # get rid of previous runs if there are any
+            self.on_ranges = self.on_ranges[:i]
+            self.h_ons = self.h_ons[:i]
+            # entire on-range
+            self.on_range = find_bounds_on_range(self.on_ranges)
+
+        # construct filter of boxcars
+        self.filter = construct_filter_of_boxcars(self.on_ranges, self.h_ons)
 
     def calc_deripple_arr(self, fftsize=32, downfreq=2, interactive=True):
         if interactive:
@@ -143,12 +201,14 @@ class SpectraCalculator():
         N = 50 # number of noise spectrums to average
         # randomly select N noise ranges; xs indicates the left starting point
         xs = np.zeros(N, dtype=int)
+        # the entire on-range
+        l_on = self.on_range[1] - self.on_range[0]
         # left of on_range
-        n = int(N*(self.on_range[0] - self.time_range[0] - self.l_on)/(self.time_range[1] - self.on_range[1] + self.on_range[0] - self.time_range[0] - self.l_on*2))
+        n = int(N*(self.on_range[0] - self.time_range[0] - l_on)/(self.time_range[1] - self.time_range[0] - self.on_range[1] + self.on_range[0] - 2*l_on))
         print(n, 'noise ranges left of on_range')
-        xs[:n] = np.random.choice(np.arange(self.time_range[0], self.on_range[0] - self.l_on), n)
+        xs[:n] = np.random.choice(np.arange(self.time_range[0], self.on_range[0] - l_on), n)
         # right of on_range
-        xs[n:] = np.random.choice(np.arange(self.on_range[1], self.time_range[1] - self.l_on), N-n)
+        xs[n:] = np.random.choice(np.arange(self.on_range[1], self.time_range[1] - l_on), N-n)
         # print(xs[:n], xs[n:])
 
         freqs = self.freqs
@@ -159,9 +219,9 @@ class SpectraCalculator():
         spec_offs_ = [[None] * N for _ in list_time_slcs] # for each of the N off-pulse regions, get the spectra according to the time slices
 
         for j, x in enumerate(xs):
-            ww = self.ww[:,:,x:x+self.l_on].copy()
+            ww = self.ww[:,:,x:x+l_on] * self.filter
             if do_upchannel:
-                ww, freqs = upchannel(self.ww[:,:,x:x+self.l_on], np.arange(self.n_freq), fftsize=fftsize, downfreq=downfreq)[:2] # ww[freq, pol, time]; return [pol, time//32, freq*16]
+                ww, freqs = upchannel(ww, np.arange(self.n_freq), fftsize=fftsize, downfreq=downfreq)[:2] # ww[freq, pol, time]; return [pol, time//32, freq*16]
                 ww = np.swapaxes(ww, 1, 2)
                 ww = np.swapaxes(ww, 0, 1) # back to [freq, pol, time]
             for i, time_slc in enumerate(list_time_slcs):
@@ -173,7 +233,7 @@ class SpectraCalculator():
         '''
         Upchannelizes and deripples on-pulse spectrum from waterfall.
         '''
-        ww = self.ww[:,:,self.on_range[0]:self.on_range[1]].copy()
+        ww = self.ww[:,:,self.on_range[0]:self.on_range[1]] * self.filter
 
         freqs = self.freqs
         f_deripple = lambda x: x
@@ -256,3 +316,80 @@ def get_smooth_matched_filter(
     flux_filt[..., lim[1] :] = 0
 
     return flux_filt, noise
+
+# codes from Ziggy
+def boxcar_kernel(width):
+    """Returns the boxcar kernel of given width normalized by sqrt(width) for S/N reasons.
+    Parameters
+    ----------
+    width : int
+        Width of the boxcar.
+    Returns
+    -------
+    boxcar : array_like
+        Boxcar of width `width` normalized by sqrt(width).
+    """
+    width = int(round(width, 0))
+    return np.ones(width) / width**0.5
+
+def find_burst(ts, min_width=1, max_width=128):
+    """Find burst peak and width using boxcar convolution.
+    Parameters
+    ----------
+    ts : array_like
+        Time-series.
+    min_width : int, optional
+        Minimum width to search from, in number of time samples.
+        1 by default.
+    max_width : int, optional
+        Maximum width to search up to, in number of time samples.
+        128 by default.
+    Returns
+    -------
+    peak : int
+        Index of the peak of the burst in the time-series.
+    width : int
+        Width of the burst in number of samples.
+    snr : float
+        S/N of the burst.
+
+    """
+    min_width = int(min_width)
+    max_width = int(max_width)
+
+    # do not search widths bigger than timeseries
+    widths = list(range(min_width, min(max_width + 1, len(ts)-2)))
+
+    # envelope finding
+    snrs = np.empty_like(widths, dtype=float)
+    peaks = np.empty_like(widths, dtype=int)
+
+    for i in range(len(widths)):
+        convolved = scipy.signal.convolve(ts, boxcar_kernel(widths[i]), mode="same")
+        peaks[i] = np.nanargmax(convolved)
+        snrs[i] = convolved[peaks[i]]
+
+    best_idx = np.nanargmax(snrs)
+
+    return peaks[best_idx], widths[best_idx], snrs[best_idx]
+
+def find_bounds_on_range(on_ranges):
+    '''
+    Find the left and right most boundaries of on_ranges.
+    '''
+    ind_l = on_ranges[0][0]
+    ind_r = on_ranges[0][1]
+    for on_range in on_ranges[1:]:
+        ind_l = min(on_range[0], ind_l)
+        ind_r = max(on_range[1], ind_r)
+    return ind_l, ind_r
+
+def construct_filter_of_boxcars(on_ranges, h_ons):
+    '''
+    Construct a filter containing a bunch on boxcars with boundaries defined by on_ranges and heights given by h_ons.
+    '''
+    ind_l, ind_r = find_bounds_on_range(on_ranges)
+    filter = np.zeros(ind_r - ind_l)
+    for i, on_range in enumerate(on_ranges):
+        filter[on_range[0]-ind_l:on_range[1]-ind_l] = h_ons[i]
+    return filter

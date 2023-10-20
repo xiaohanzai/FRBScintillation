@@ -30,9 +30,8 @@ class WaterfallLoader():
 
 def data_reduction_pipeline_chime(fname, DM, time_shift=True, **kwargs):
     data = BBData.from_file(fname)
-    ww = dedisperse_and_normalize_bbdata(data, DM=DM, time_shift=time_shift, **kwargs) # shape (freq, pol, time)
-    ww[ww == 0] = np.nan
-    return ww
+    ww, offpulse_range = dedisperse_and_normalize_bbdata(data, DM=DM, time_shift=time_shift, **kwargs) # shape (freq, pol, time)
+    return ww, offpulse_range
 
 def data_reduction_pipeline_masui(fname, *args, **kwargs):
     # fname is either filtered_short or filtered
@@ -84,63 +83,6 @@ def incoherent_dedisp(data, DM, freqs, times):
         wfall[i] = np.roll(data[i], bins_shift, axis=-1)
 
     return wfall
-
-## These are functions from Ziggy; I don't need them right now
-# def boxcar_kernel(width):
-#     """Returns the boxcar kernel of given width normalized by sqrt(width) for S/N reasons.
-#     Parameters
-#     ----------
-#     width : int
-#         Width of the boxcar.
-#     Returns
-#     -------
-#     boxcar : array_like
-#         Boxcar of width `width` normalized by sqrt(width).
-#     """
-#     width = int(round(width, 0))
-#     return np.ones(width, dtype="float32") / np.sqrt(width)
-
-# def find_burst(ts, min_width=1, max_width=128):
-#     """Find burst peak and width using boxcar convolution.
-#     Parameters
-#     ----------
-#     ts : array_like
-#         Time-series.
-#     min_width : int, optional
-#         Minimum width to search from, in number of time samples.
-#         1 by default.
-#     max_width : int, optional
-#         Maximum width to search up to, in number of time samples.
-#         128 by default.
-#     Returns
-#     -------
-#     peak : int
-#         Index of the peak of the burst in the time-series.
-#     width : int
-#         Width of the burst in number of samples.
-#     snr : float
-#         S/N of the burst.
-
-#     """
-#     min_width = int(min_width)
-#     max_width = int(max_width)
-
-#     # do not search widths bigger than timeseries
-#     widths = list(range(min_width, min(max_width + 1, len(ts)-2)))
-
-#     # envelope finding
-#     snrs = np.empty_like(widths, dtype=float)
-#     peaks = np.empty_like(widths, dtype=int)
-
-#     for i in range(len(widths)):
-#         convolved = scipy.signal.convolve(ts, boxcar_kernel(widths[i]),
-#                                           mode="same")
-#         peaks[i] = np.nanargmax(convolved)
-#         snrs[i] = convolved[peaks[i]]
-
-#     best_idx = np.nanargmax(snrs)
-
-#     return peaks[best_idx], widths[best_idx], snrs[best_idx]
 
 ## There are small changes in the code below compared to the original version from Zarif
 ## I think it's basically replace 0 with nan
