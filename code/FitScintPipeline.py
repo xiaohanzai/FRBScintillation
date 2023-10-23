@@ -123,6 +123,7 @@ class FitScintPipeline():
             # save plot
             if save_plot:
                 fig.savefig(save_path + '/fit_spec.png')
+            plt.show()
 
         if return_all:
             return spec_fitter, spec_smooth_on_, spec_smooth_offs_
@@ -132,10 +133,10 @@ class FitScintPipeline():
                 dspec_on_=None, dspec_offs_=None, freqs=None, acf_calculator=None, return_all=False):
         if acf_calculator is None:
             acf_calculator = ACFCalculator(dspec_on_, dspec_offs_, freqs)
-        acf_on, acf_offs, nus = acf_calculator.calc_acf_band(time_slc_i, time_slc_j, freq_min, freq_max)
+        acf_on, acf_offs, nus, flag = acf_calculator.calc_acf_band(time_slc_i, time_slc_j, freq_min, freq_max)
         if return_all:
-            return acf_calculator, acf_on, acf_offs, nus
-        return acf_on, acf_offs, nus
+            return acf_calculator, acf_on, acf_offs, nus, flag
+        return acf_on, acf_offs, nus, flag
 
     def fit_acf(self, acf_on, acf_offs, nus, ebar_scale_fac=1., exclude_zero=False):
         acf_fitter = ACFFitter(acf_on, acf_offs, nus, ebar_scale_fac=ebar_scale_fac)
@@ -193,13 +194,17 @@ class FitScintPipeline():
         acf_offs_ = [None]*N
         for i in range(N):
             freq_bin = freq_bins[i]
-            acf_on, acf_offs, nus = self.calc_acf(time_slc_i, time_slc_j, freq_bin[0], freq_bin[1], acf_calculator=acf_calculator)
+            acf_on, acf_offs, nus, flag = self.calc_acf(time_slc_i, time_slc_j, freq_bin[0], freq_bin[1], acf_calculator=acf_calculator)
             # fit ACF
             ms[i], m_errs[i], nu_dcs[i], nu_dc_errs[i] = self.fit_acf(acf_on, acf_offs, nus, ebar_scale_fac=ebar_scale_fac,
                                                                     exclude_zero=exclude_zero)
             # plot
             if plot:
-                self.plot_acf(nus, acf_on, ms[i], nu_dcs[i], y_offset=i*1., label=f'{freq_bin[0]}-{freq_bin[1]} MHz',
+                if flag: # norm is too small
+                    self.plot_acf(nus, acf_on*0., 0., 1., y_offset=i*1., label=f'{freq_bin[0]}-{freq_bin[1]} MHz',
+                            acf_offs=acf_offs*0., axes=axes)
+                else:
+                    self.plot_acf(nus, acf_on, ms[i], nu_dcs[i], y_offset=i*1., label=f'{freq_bin[0]}-{freq_bin[1]} MHz',
                             acf_offs=acf_offs, axes=axes)
                 # if i == 0:
                 #     ylim[0] = axes[0].get_ylim()[0]
@@ -214,9 +219,10 @@ class FitScintPipeline():
         if plot:
             for ax in axes:
                 ax.set_ylim(ylim)
-        # save plot
-        if plot and save_plot:
-            fig.savefig(save_path + '/fit_acf.png')
+            # save plot
+            if save_plot:
+                fig.savefig(save_path + '/fit_acf.png')
+            plt.show()
 
         return nus, acf_on_, acf_offs_, ms, m_errs, nu_dcs, nu_dc_errs
 
@@ -259,7 +265,9 @@ class FitScintPipeline():
             ebar_scale_fac=ebar_scale_fac, freq_bins=freq_bins,
             plot=True, save_path=save_path, save_plot=False, exclude_zero=False, **kwargs)
         # print('mod indices from cross corr vs autocorr:', ms, ms0)
-        print('mod indices and error-bars:', ms, m_errs)
+        print('mod indices and error-bars:')
+        for m, m_err in zip(ms, m_errs):
+            print(f'{m:.2f} +/- {m_err:.2f}')
 
         # save results
         if dump:
@@ -289,21 +297,43 @@ class FitScintPipeline():
             with open(save_path + '/acfs.pkl', 'wb') as f:
                 pickle.dump(rst_acfs, f)
 
+def get_bbdata_fname(frb_id, path='/arc/projects/chime_frb/baseband_catalog/beamformed_files/'):
+    fnames = glob.glob(path + '*.h5')
+    for fname in fnames:
+        if frb_id in fname:
+            return fname
+    return ''
+
 def get_fitburst_dm(frb_id, fitburst_path='/arc/projects/chime_frb/Basecat_morph/fitburst_run_ketan/'):
-    data = json.load(open(fitburst_path + f'/{frb_id}/results_fitburst_{frb_id}.json', 'r'))
+    fnames = glob.glob(fitburst_path + f'/{frb_id}/results_fitburst*json')
+    if len(fnames) == 0:
+        answer = input(f'no fitburst results found for {frb_id}; input the DM:')
+        return eval(answer)
+    if len(fnames) == 1:
+        fname = fnames[0]
+    else:
+        fname = ''
+        for i in range(len(fnames)):
+            fnames[i] = fnames[i][fnames[i].index('results'):]
+            if fnames[i] in [f'results_fitburst_scat_{frb_id}.json', f'results_fitburst_{frb_id}.json']:
+                fname = fnames[i]
+                print('by default using', fname)
+                break
+        if fname == '':
+            fname = input(f'choose from these files to use for the DM {fnames}:')
+        fname = fitburst_path + f'/{frb_id}/' + fname
+    data = json.load(open(fname, 'r'))
     return data['initial_dm'] + data['model_parameters']['dm'][0]
 
 def main():
-    path = '/arc/projects/chime_frb/baseband_catalog/beamformed_files/'
-    fnames = glob.glob(path + '*.h5')
-
     out_path = '/arc/projects/chime_frb/xiaohan/scintillation'
     fit_scint_pipeline = FitScintPipeline(data_reduction_pipeline_chime)
 
     frb_id = '24365582'
-    for fname in fnames:
-        if frb_id in fname:
-            break
+    fname = get_bbdata_fname(frb_id)
+    if fname == '':
+        print('no bbdata file name found; check frb ID')
+        return
     fit_scint_pipeline.run(fname, DM=get_fitburst_dm(frb_id), out_path=out_path, interactive=False)
 
 if __name__ == '__main__':

@@ -20,10 +20,10 @@ def f_corr(xs, ys=None, xweights=None, yweights=None):
         corr = np.array([np.nansum(wxs[:,i:] * wys[:,:xs.shape[1]-i], axis=1) for i in range(xs.shape[1])]).T
         norm = np.array([np.nansum(xweights[:,i:] * yweights[:,:xs.shape[1]-i], axis=1) for i in range(xs.shape[1])]).T
     # TODO: not sure if this the best protection mechanism
-    # if norm.max() / xs.shape[-1] < 1e-3:
-    #     print()
-    #     return np.zeros_like(corr)
-    return corr / norm
+    flag = False
+    if norm.max() / xs.shape[-1] < 1e-4:
+        flag = True
+    return corr / norm, flag
 
 class ACFCalculator():
     def __init__(self, dspec_on_, dspec_offs_, freqs):
@@ -75,9 +75,11 @@ class ACFCalculator():
 
         ws = self.chan_weights[i_start:i_end]
 
-        acf_on = f_corr(self.dspec_on_[time_slc_i, i_start:i_end], self.dspec_on_[time_slc_j, i_start:i_end],
+        acf_on, flag = f_corr(self.dspec_on_[time_slc_i, i_start:i_end], self.dspec_on_[time_slc_j, i_start:i_end],
                     xweights=ws, yweights=ws)
-        acf_offs = f_corr(self.dspec_offs_[time_slc_i, :, i_start:i_end], self.dspec_offs_[time_slc_j, :, i_start:i_end],
+        acf_offs, _ = f_corr(self.dspec_offs_[time_slc_i, :, i_start:i_end], self.dspec_offs_[time_slc_j, :, i_start:i_end],
                     xweights=ws, yweights=ws)
         nus = np.arange(len(acf_on)) * dfreq
-        return acf_on, acf_offs, nus
+        if flag:
+            print('ACF calc warning: norm is small, freqs =', freq_min, '-' , freq_max)
+        return acf_on, acf_offs, nus, flag

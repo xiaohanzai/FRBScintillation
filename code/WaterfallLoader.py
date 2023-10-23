@@ -28,9 +28,9 @@ class WaterfallLoader():
     def load_data(self, fname, DM, **kwargs):
         return self.data_reduction_pipeline(fname, DM, **kwargs)
 
-def data_reduction_pipeline_chime(fname, DM, time_shift=True, **kwargs):
+def data_reduction_pipeline_chime(fname, DM, **kwargs):
     data = BBData.from_file(fname)
-    ww, offpulse_range = dedisperse_and_normalize_bbdata(data, DM=DM, time_shift=time_shift, **kwargs) # shape (freq, pol, time)
+    ww, offpulse_range = dedisperse_and_normalize_bbdata(data, DM=DM, **kwargs) # shape (freq, pol, time)
     return ww, offpulse_range
 
 def data_reduction_pipeline_masui(fname, *args, **kwargs):

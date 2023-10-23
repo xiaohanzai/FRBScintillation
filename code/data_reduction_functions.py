@@ -1,7 +1,7 @@
 from baseband_analysis.core.signal import get_main_peak_lim, frequency_average
 from baseband_analysis.analysis.snr import get_snr
 from baseband_analysis.core.sampling import scrunch, clip
-from baseband_analysis.core.dedispersion import coherent_dedisp, delay_across_the_band
+from baseband_analysis.core.dedispersion import coherent_dedisp, incoherent_dedisp, delay_across_the_band
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -130,7 +130,7 @@ def clip_data(bbdata, valid_span_power_bins, DM):
     )
     return data_clipped
 
-def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=False, time_shift=True,
+def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactive=False,
                                     plot=True, save_path='', save_plot=False, **kwargs):
     """
     given a bbdata, dedisperse and normalize it
@@ -142,26 +142,38 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
         output = get_snr(bbdata, DM=DM, DM_range=None, diagnostic_plots=True, return_full=True,
                             downsample=downsample_factor, spectrum_lim=False)
         valid_channels = output[5]
-        valid_span_power_bins = output[6]
+        # TODO: check if sometimes the dumped bbdata seems problematic
+        # valid_span_power_bins = output[6]
+        d = np.abs(bbdata['tiedbeam_baseband'][-1,0,:])
+        ind = -1
+        for i in range(2, len(d)):
+            if np.all(np.isnan(d[-i:])):
+                ind = len(d) - i
+            else:
+                break
+        valid_span_power_bins = [0, min(ind, output[6][1])]
         if DM is None: # in case input DM is None
             DM = output[7]
     except:
         print('get_snr failed')
         return
 
-    # clip
-    try:
-        bbdata = clip_data(bbdata, valid_span_power_bins, DM)
-    except:
-        print('clip_data failed')
-        return
+    # # clip
+    # try:
+    #     bbdata = clip_data(bbdata, valid_span_power_bins, DM)
+    # except:
+    #     print('clip_data failed')
+    #     return
 
-    # dedisperse
-    data = coherent_dedisp(bbdata, DM, time_shift=time_shift)
+    # dedisperse 1
+    data = coherent_dedisp(bbdata, DM, time_shift=False)
+
+    # dedisperse 2
+    data = incoherent_dedisp(bbdata, DM, matrix_in=data, fill_wfall=False)[0]
+    data = data[:,:,valid_span_power_bins[0]:valid_span_power_bins[1]]
 
     # identify off burst region to use
-    I = np.sum(np.abs(data)**2, axis=1)
-    Iscr0 = scrunch(I, tscrunch=downsample_factor, fscrunch=1)
+    Iscr0 = scrunch(np.sum(np.abs(data)**2, axis=1), tscrunch=downsample_factor, fscrunch=1)
     nanind = np.where(np.isnan(Iscr0[-1]))[0]
     if len(nanind) == 0:
         nanind = Iscr0.shape[1]
@@ -169,6 +181,11 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
         nanind = nanind[0]
     st_tbin, end_tbin = get_main_peak_lim(Iscr0[:,:nanind+500], diagnostic_plots=False, normalize_profile=True)
     if interactive:
+        plt.figure(figsize=(10,5))
+        plt.subplot(121)
+        vmin, vmax = np.nanpercentile(Iscr0, [5, 95])
+        plt.imshow(Iscr0, aspect='auto', vmin=vmin, vmax=vmax)
+        plt.subplot(122)
         plt.plot(np.nanmean(Iscr0, axis=0))
         plt.show()
         answer = input(f'Please define the bin range to use for the off burst statistics (beginbin,endbin), reference {st_tbin}, {end_tbin}, {nanind}: ')
@@ -219,17 +236,25 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
 
     # show how we did
     if plot:
+        fig = plt.figure(figsize=(12,12))
+        fig.subplots_adjust(left=0.07, right=0.98, bottom=0.05, top=0.95)
+        # the original bbdata
+        plt.subplot(221)
+        Iscr = scrunch(np.sum(np.abs(bbdata['tiedbeam_baseband'])**2, axis=1), tscrunch=downsample_factor, fscrunch=1)
+        vmin, vmax = np.nanpercentile(Iscr, [5, 95])
+        plt.imshow(Iscr, vmin=vmin, vmax=vmax, aspect='auto')
+        # the final results of our processing
+        plt.subplot(222)
         Iscr = scrunch(np.sum(np.abs(data)**2, axis=1), tscrunch=downsample_factor, fscrunch=1)
         vmin, vmax = np.nanpercentile(Iscr, [5, 95])
-        fig = plt.figure(figsize=(6,15))
-        fig.subplots_adjust(left=0.15, right=0.95, bottom=0.05, top=0.95)
-        plt.subplot(311)
         plt.imshow(Iscr, vmin=vmin, vmax=vmax, aspect='auto')
-        plt.subplot(312)
+        # time series before normalizing; I just wanted to see what the noise is like
+        plt.subplot(223)
         plt.plot(np.nanmean(Iscr0, axis=0))
         plt.axvline(x=offpulse_range[0], color='k', linestyle='--')
         plt.axvline(x=offpulse_range[1], color='k', linestyle='--')
-        plt.subplot(313)
+        # time series of the final results
+        plt.subplot(224)
         plt.plot(np.nanmean(Iscr, axis=0))
         plt.axvline(x=offpulse_range[0], color='k', linestyle='--')
         plt.axvline(x=offpulse_range[1], color='k', linestyle='--')
