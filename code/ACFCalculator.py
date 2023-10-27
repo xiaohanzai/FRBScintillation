@@ -1,5 +1,13 @@
 import numpy as np
 
+def calc_dspec(spec_on_, spec_offs_, spec_smooth_on_, spec_smooth_offs_):
+    mean_spec_off_ = np.nanmean(spec_offs_, axis=1)
+    spec_smooth_off_ = np.nanmean(spec_smooth_offs_, axis=1)
+    spec_smooth_ = spec_smooth_on_ - spec_smooth_off_
+    dspec_on_ = (spec_on_-mean_spec_off_)/spec_smooth_ - 1
+    dspec_offs_ = (spec_offs_-mean_spec_off_[:,np.newaxis,:])/spec_smooth_[:,np.newaxis,:]
+    return dspec_on_, dspec_offs_
+
 def f_corr(xs, ys=None, xweights=None, yweights=None):
     if ys is None:
         ys = xs
@@ -70,8 +78,9 @@ class ACFCalculator():
         dfreq = (self.freq_max - self.freq_min)/self.n_freq
         # get indices of frequencies
         if i_start is None:
-            i_start = int((self.freq_max - freq_max) / dfreq)
-            i_end = min(int((self.freq_max - freq_min) / dfreq)+1, self.n_freq)
+            inds = np.where((self.freqs >= freq_min) & (self.freqs <= freq_max))[0]
+            i_start = inds[0]
+            i_end = inds[-1] + 1
 
         ws = self.chan_weights[i_start:i_end]
 

@@ -58,23 +58,6 @@ def deripple(spectra, deripple_arr=None):
     spectra = np.multiply(spectra, 1/big_fix)
     return spectra
 
-def plot_on_range(power, filter, on_range, ax=None):
-    if ax is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-    ind_l, ind_r = on_range
-    flux = np.nanmean(power, axis=0) - np.nanmean(power[:,:ind_l])
-    ax.plot(flux)
-    flux_filt = np.zeros(power.shape[-1])
-    flux_filt[ind_l:ind_r] = filter
-    flux_filt *= flux.max() / flux_filt.max()
-    ax.plot(flux_filt)
-    # ax.hlines(2*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
-    ax.vlines([ind_l, ind_r], 0, np.max(flux_filt), colors='r', linestyles='dotted')
-    ax.set_xlim([ind_l-1000, ind_r+1000])
-    ax.set_xlabel('Time (frames)')
-    ax.set_ylabel('Flux')
-
 class SpectraCalculator():
     def __init__(self, ww, offpulse_range, freqs=None, f_power=f_power):
         self.ww = ww.copy()
@@ -93,6 +76,7 @@ class SpectraCalculator():
         # a rough estimate of the on-pulse region; need to call calc_on_range() to get a better estimate
         self.on_range = get_main_peak_lim(self.power, floor_level=0.1, diagnostic_plots=False, normalize_profile=True)
         self.on_ranges = [self.on_range] # allow for multiple components
+        self.l_on = self.on_range[1] - self.on_range[0]
         # height of the on-range regions; need it to define filters
         self.h_ons = [1.]
         # construct a boxcar filter for later use
@@ -100,20 +84,6 @@ class SpectraCalculator():
 
         # the full time range of the FRB data
         self.time_range = (0, self.ww.shape[-1])
-
-    def plot_waterfall(self, ax=None):
-        vmin, vmax = np.nanpercentile(self.power[~np.isnan(self.power)], [5, 95])
-        if ax is None:
-            fig = plt.figure()
-            ax = fig.add_subplot(111)
-        ax.imshow(self.power, aspect='auto', origin='lower', extent=[0, self.ww.shape[-1], self.freq_max, self.freq_min],
-                   vmin=vmin, vmax=vmax)
-        ax.vlines(self.on_range, self.freq_min, self.freq_max, colors='r', linestyles='dashed')
-        ax.set_xlim([self.on_range[0]-1000, self.on_range[1]+1000])
-        ax.set_xlabel('Time (frames)')
-        ax.set_ylabel('Frequency (MHz)')
-        ax.invert_yaxis()
-        return ax
 
     def calc_on_range(self, ds_factor=16, interactive=False, n_noise=3, floor_level=0, **kwargs):
         '''
@@ -178,12 +148,16 @@ class SpectraCalculator():
             # entire on-range
             self.on_range = find_bounds_on_range(self.on_ranges)
 
+        self.l_on = self.on_range[1] - self.on_range[0]
+
         # construct filter of boxcars
         self.filter = construct_filter_of_boxcars(self.on_ranges, self.h_ons)
 
     def calc_deripple_arr(self, fftsize=32, downfreq=2, interactive=True):
         if interactive:
-            plt.imshow(np.sum(np.abs(self.ww)**2, axis=1))
+            d = np.sum(np.abs(self.ww)**2, axis=1)
+            vmin, vmax = np.nanpercentile(d[~np.isnan(d)], [5, 95])
+            plt.imshow(d, vmin=vmin, vmax=vmax, aspect='auto')
             plt.show()
             answer = input('Please define the bin range to use for the off burst statistics (beginbin,endbin): ')
             answer = answer.split(',')
@@ -193,7 +167,8 @@ class SpectraCalculator():
 
         return calc_deripple_arr(ww_off, fftsize=fftsize, downfreq=downfreq)
 
-    def calc_spec_off(self, do_upchannel=True, fftsize=32, downfreq=2, deripple_arr=None, f_spec=f_spec_I, list_time_slcs=[np.s_[:]]):
+    def calc_spec_off(self, do_upchannel=True, fftsize=32, downfreq=2, deripple_arr=None, f_spec=f_spec_I, list_time_slcs=[np.s_[:]],
+                    separate_components=False, **kwargs):
         '''
         Randomly sample N=50 noise spectrums from the off-pulse region.
         Upchannelizes and deripples noise spectrums from waterfall.
@@ -202,13 +177,14 @@ class SpectraCalculator():
         # randomly select N noise ranges; xs indicates the left starting point
         xs = np.zeros(N, dtype=int)
         # the entire on-range
-        l_on = self.on_range[1] - self.on_range[0]
+        
         # left of on_range
-        n = int(N*(self.on_range[0] - self.time_range[0] - l_on)/(self.time_range[1] - self.time_range[0] - self.on_range[1] + self.on_range[0] - 2*l_on))
+        n = int(N*(self.on_range[0] - self.time_range[0] - self.l_on)/(self.time_range[1] - self.time_range[0] - self.on_range[1] + self.on_range[0] - 2*self.l_on))
+        n = min(n, N)
         print(n, 'noise ranges left of on_range')
-        xs[:n] = np.random.choice(np.arange(self.time_range[0], self.on_range[0] - l_on), n)
+        xs[:n] = np.random.choice(np.arange(self.time_range[0], self.on_range[0] - self.l_on), n)
         # right of on_range
-        xs[n:] = np.random.choice(np.arange(self.on_range[1], self.time_range[1] - l_on), N-n)
+        xs[n:] = np.random.choice(np.arange(self.on_range[1], self.time_range[1] - self.l_on), N-n)
         # print(xs[:n], xs[n:])
 
         freqs = self.freqs
@@ -219,17 +195,22 @@ class SpectraCalculator():
         spec_offs_ = [[None] * N for _ in list_time_slcs] # for each of the N off-pulse regions, get the spectra according to the time slices
 
         for j, x in enumerate(xs):
-            ww = self.ww[:,:,x:x+l_on] * self.filter
+            ww = self.ww[:,:,x:x+self.l_on] * self.filter
             if do_upchannel:
                 ww, freqs = upchannel(ww, np.arange(self.n_freq), fftsize=fftsize, downfreq=downfreq)[:2] # ww[freq, pol, time]; return [pol, time//32, freq*16]
                 ww = np.swapaxes(ww, 1, 2)
                 ww = np.swapaxes(ww, 0, 1) # back to [freq, pol, time]
             for i, time_slc in enumerate(list_time_slcs):
+                if time_slc == 'first half':
+                    time_slc = np.s_[:self.l_on//2]
+                elif time_slc == 'second half':
+                    time_slc = np.s_[self.l_on//2:]
                 spec = calc_spec(ww, time_slc, f_spec=f_spec)
                 spec_offs_[i][j] = f_deripple(spec)
         return np.asarray(spec_offs_), freqs
 
-    def calc_spec_on(self, do_upchannel=True, fftsize=32, downfreq=2, deripple_arr=None, f_spec=f_spec_I, list_time_slcs=[np.s_[:]]):
+    def calc_spec_on(self, do_upchannel=True, fftsize=32, downfreq=2, deripple_arr=None, f_spec=f_spec_I, list_time_slcs=[np.s_[:]],
+                    separate_components=False, **kwargs):
         '''
         Upchannelizes and deripples on-pulse spectrum from waterfall.
         '''
@@ -246,6 +227,10 @@ class SpectraCalculator():
         # for each time slice, calculate a spectrum and return a list of spectra
         spec_on_ = [None]*len(list_time_slcs)
         for i, time_slc in enumerate(list_time_slcs):
+            if time_slc == 'first half':
+                time_slc = np.s_[:self.l_on//2]
+            elif time_slc == 'second half':
+                time_slc = np.s_[self.l_on//2:]
             spec = calc_spec(ww, time_slc, f_spec=f_spec)
             spec_on_[i] = f_deripple(spec)
         return np.asarray(spec_on_), freqs
