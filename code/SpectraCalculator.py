@@ -74,7 +74,7 @@ class SpectraCalculator():
         self.power = f_power(self.ww) # total intensity
 
         # a rough estimate of the on-pulse region; need to call calc_on_range() to get a better estimate
-        self.on_range = get_main_peak_lim(self.power, floor_level=0.1, diagnostic_plots=False, normalize_profile=True)
+        self.on_range = get_main_peak_lim(self.power, floor_level=0, diagnostic_plots=False, normalize_profile=True)
         self.on_ranges = [self.on_range] # allow for multiple components
         self.l_on = self.on_range[1] - self.on_range[0]
         # height of the on-range regions; need it to define filters
@@ -85,33 +85,28 @@ class SpectraCalculator():
         # the full time range of the FRB data
         self.time_range = (0, self.ww.shape[-1])
 
-    def calc_on_range(self, ds_factor=16, interactive=False, n_noise=3, floor_level=0, **kwargs):
+    def calc_on_range(self, ds_factor=16, interactive=False, **kwargs):
         '''
         Calculate the on-pulse region.
         '''
-        ## the old method
-        # flux_filt, noise = get_smooth_matched_filter(self.power, ds_factor=ds_factor, floor_level=floor_level)
-        # flux_filt, noise = flux_filt[0], noise[0]
-        # ind = np.argmax(flux_filt)
-        # if flux_filt[ind] < n_noise*noise:
-        #     print('Warning: no on-pulse region found!')
-        #     self.on_range = (np.nan, np.nan)
-        #     self.l_on = np.nan
-        #     return None, None, None
-        # ind_l = np.argmin(np.abs(flux_filt[:ind] - n_noise*noise))
-        # if ind_l < self.on_range[0] - 500:
-        #     ind_l = self.on_range[0] # use get_main_peak_lim() estimate instead
-        # ind_r = np.argmin(np.abs(flux_filt[ind:] - n_noise*noise))+ind
-
         noise = np.nanmean(self.power[:,self.offpulse_range[0]:self.offpulse_range[1]])
         flux_filt = np.nanmean(scrunch(self.power, tscrunch=ds_factor, fscrunch=1), axis=0) - noise
+        # TODO: I thought the lines below would help with automatic burst finidng but no, unfortunately.
+        # maybe there's still improvement?  but I'd just do the burst finding interactively for now.
+        # if np.max(flux_filt) > 2*noise:
+        #     tmp = flux_filt[1:]*flux_filt[:-1]
+        #     ind_l, ind_r = np.where(tmp < 0)[0][0, -1]
+        #     self.on_range = (ind_l * ds_factor + ds_factor / 2, ind_r * ds_factor + ds_factor / 2)
+        #     self.l_on = self.on_range[1] - self.on_range[0]
 
         ## use convolution with the boxcar kernel to determine on-pulse range
         ts = np.nanmean(self.power, axis=0) - noise
         if not interactive:
-            peak, width, _ = find_burst(ts, max_width=(self.on_range[1]-self.on_range[0])*2)
-            ind_l = peak - width//2
-            ind_r = peak + width//2 + 1
+            ind_l = max(self.on_range[0] - 2*self.l_on, 0)
+            ind_r = min(self.on_range[1] + 2*self.l_on, len(ts))
+            peak, width, _ = find_burst(ts[ind_l:ind_r], max_width=(ind_r-ind_l))
+            ind_l = peak - width//2 + ind_l
+            ind_r = ind_l + width + 1
             self.on_range = [ind_l, ind_r]
             self.on_ranges = [self.on_range]
             self.h_ons = [1.]
