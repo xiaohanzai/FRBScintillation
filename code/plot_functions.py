@@ -7,7 +7,7 @@ from ACFFitter import f_lorenzian
 def plot_on_range(power, filter, on_range, ax=None):
     '''
     Calculate a time series from power, plot it, and plot the on-pulse range.
-    The input filter is (the set of) boxcar filter(s) that define the on-pulse range.
+    The input filter is (the set of) boxcar filter(s) that define the on-pulse range, or the fitburst model.  Has 3 dimensions.
     The code will also calculate a smoothed (downsampled) version of the time series for better visual inspection.
     '''
     if ax is None:
@@ -25,8 +25,8 @@ def plot_on_range(power, filter, on_range, ax=None):
     ax.plot(np.arange(len(flux_smoothed)) * ds_factor + ds_factor/2, flux_smoothed)
     # plot the filter
     flux_filt = np.zeros(power.shape[-1])
-    flux_filt[ind_l:ind_r] = filter
-    flux_filt *= flux.max() / flux_filt.max()
+    flux_filt[ind_l:ind_r] = filter.sum(axis=(0,1))
+    flux_filt *= flux_smoothed.max() / flux_filt.max()
     ax.plot(flux_filt)
     # ax.hlines(2*noise, 0, len(flux_filt), colors='k', linestyles='dashed')
     # plot the on-pulse range
@@ -46,7 +46,7 @@ def plot_waterfall(power, on_range, ax=None, freq_max=800., freq_min=400.):
     if ax is None:
         fig = plt.figure()
         ax = fig.add_subplot(111)
-    ax.imshow(power, aspect='auto', origin='lower', extent=[0, power.shape[-1], freq_min, freq_max],
+    ax.imshow(power, aspect='auto', origin='lower', extent=[0, power.shape[-1], freq_max, freq_min],
             vmin=vmin, vmax=vmax)
     ax.vlines(on_range, freq_min, freq_max, colors='r', linestyles='dashed')
     ax.set_xlim([on_range[0]-5000, on_range[1]+5000])
@@ -69,12 +69,12 @@ def plot_specs(spec_on_, spec_offs_, spec_smooth_on_, spec_smooth_offs_, freqs):
     axes[0].plot(freqs, spec_on_[ind0], label='on-pulse')
 
     # plot smooth spectra
-    axes[1].plot(freqs, spec_on_[ind0], label='fitted smooth')
+    axes[1].plot(freqs, spec_on_[ind0], label='on-pulse')
     for i in range(spec_smooth_on_.shape[0]):
         linestyle = '-'
         if i != ind0:
             linestyle = '--'
-        axes[1].plot(freqs, spec_smooth_on_[i], linestyle=linestyle, label='time slice %d' % i)
+        axes[1].plot(freqs, spec_smooth_on_[i], linestyle=linestyle, label='smooth spec %d' % i)
     axes[1].text(axes[1].get_xlim()[1], axes[1].get_ylim()[1], 'on-pulse', ha='right', va='top')
     axes[1].legend(loc=2)
 
@@ -128,7 +128,7 @@ def log_rebin(xs, ys, edge0, n_linear):
             bin_r = (1. + 1. / n_linear) * bin_r
     return np.array(xs_new), np.array(ys_new)
 
-def plot_acf(nus, acf_on, m=None, nu_dc=None, y_offset=0., label=None, acf_offs=None, ax=None, alpha=0.5,
+def plot_acf(nus, acf_on, m=None, nu_dc=None, y_offset=0., label=None, acf_offs=None, ax=None, alpha=0.5, label_fit=False,
             logx=False, xlim=(1e-6,2), flag=None, plot_log_rebin=True, plot0s_std_threshold=1., **kwargs):
     '''
     Plot only one ACF.
@@ -155,9 +155,15 @@ def plot_acf(nus, acf_on, m=None, nu_dc=None, y_offset=0., label=None, acf_offs=
     if plot_log_rebin:
         # log binning
         xs, ys = log_rebin(nus, acf_on * (~flag), 0.02, 1)
-        ax.plot(xs, ys+y_offset, 'o-', color=c)
+        label_ = None
+        if label_fit:
+            label_ = 'binned data'
+        ax.plot(xs, ys+y_offset, 'o-', color=c, label=label_)
     if m is not None and nu_dc is not None:
-        ax.plot(nus, f_lorenzian(nus, m, nu_dc)+y_offset, 'r')
+        label_ = None
+        if label_fit:
+            label_ = 'Lorentzian fit'
+        ax.plot(nus, f_lorenzian(nus, m, nu_dc) * (~flag) + y_offset, 'r', label=label_)
     # plot off-pulse ACFs
     if acf_offs is not None:
         for c, ind in zip(cs, inds_off):
@@ -185,18 +191,22 @@ def plot_acfs(nus, acf_on_, freq_bins=None, acf_offs_=None, ms=None, nu_dcs=None
         fig = plt.figure()
         ax = fig.add_subplot(111)
     for i in range(len(acf_on_)):
-        m = nu_dc = flag = None
+        m = nu_dc = None
         if ms is not None:
             m, nu_dc = ms[i], nu_dcs[i]
         acf_offs = None
         if acf_offs_ is not None:
             acf_offs = acf_offs_[i]
+        flag = False
         if flags is not None:
             flag = flags[i]
         label = None
         if freq_bins is not None:
             label = f'{freq_bins[i][0]}-{freq_bins[i][1]} MHz'
-        plot_acf(nus, acf_on_[i], m=m, nu_dc=nu_dc, y_offset=i, label=label,
+        label_fit = False
+        if i == 0:
+            label_fit = True
+        plot_acf(nus, acf_on_[i], m=m, nu_dc=nu_dc, y_offset=i, label=label, label_fit=label_fit,
                 acf_offs=acf_offs, ax=ax, flag=flag, **kwargs)
     ax.set_ylim([-0.5, len(acf_on_)+0.5])
     return ax

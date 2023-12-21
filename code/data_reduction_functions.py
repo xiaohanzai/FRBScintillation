@@ -140,7 +140,7 @@ def dedisperse_and_normalize_bbdata(bbdata, DM, downsample_factor=32, interactiv
     # freq_id, freq, power, offset, weight, valid_channels_out, time_range_out, DM_out, downsampling_factor = get_snr(...)
     try:
         output = get_snr(bbdata, DM=DM, DM_range=None, diagnostic_plots=True, return_full=True,
-                            downsample=downsample_factor, spectrum_lim=False)
+                            downsample=downsample_factor, spectrum_lim=False, raise_missing_signal=False)
         valid_channels = output[5]
         # TODO: check if sometimes the dumped bbdata seems problematic
         # valid_span_power_bins = output[6]
