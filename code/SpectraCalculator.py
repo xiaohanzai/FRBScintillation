@@ -270,9 +270,9 @@ class SpectraCalculator():
                 ww = np.swapaxes(ww, 0, 1) # back to [freq, pol, time]
             for i, time_slc in enumerate(list_time_slcs):
                 if time_slc == 'first half':
-                    time_slc = np.s_[:self.l_on//2]
+                    time_slc = np.s_[:ww.shape[-1]//2]
                 elif time_slc == 'second half':
-                    time_slc = np.s_[self.l_on//2:]
+                    time_slc = np.s_[ww.shape[-1]//2:]
                 spec = calc_spec(ww, time_slc, f_spec=f_spec)
                 spec_offs_[i][j] = f_deripple(spec)
         return np.asarray(spec_offs_), freqs
@@ -296,9 +296,9 @@ class SpectraCalculator():
         spec_on_ = [None]*len(list_time_slcs)
         for i, time_slc in enumerate(list_time_slcs):
             if time_slc == 'first half':
-                time_slc = np.s_[:self.l_on//2]
+                time_slc = np.s_[:ww.shape[-1]//2]
             elif time_slc == 'second half':
-                time_slc = np.s_[self.l_on//2:]
+                time_slc = np.s_[ww.shape[-1]//2:]
             spec = calc_spec(ww, time_slc, f_spec=f_spec)
             spec_on_[i] = f_deripple(spec)
         return np.asarray(spec_on_), freqs

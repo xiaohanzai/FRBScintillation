@@ -43,6 +43,7 @@ class ACFCalculator():
         self.dspec_offs_ = dspec_offs_.copy()
 
         self.chan_weights = 1/np.nanvar(np.sum(self.dspec_offs_, axis=0), axis=0)
+        self.chan_weights[np.isinf(self.chan_weights)] = np.nan
 
         self.freqs = freqs.copy()
         self.freq_min = freqs.min()
