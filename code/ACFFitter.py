@@ -20,7 +20,7 @@ def fit_lorenzian(nus, acf, ebars=None, exclude_zero=False):
     if ebars is not None:
         sigma = ebars[start:][ii]
     try:
-        popt, pcov = curve_fit(f_lorenzian, nus[start:][ii], acf[start:][ii], sigma=sigma, bounds=([0, 0], [1., 10.]), check_finite=False)
+        popt, pcov = curve_fit(f_lorenzian, nus[start:][ii], acf[start:][ii], sigma=sigma, bounds=([0, nus[1]-nus[0]], [2., 10.]), check_finite=False)
         perr = np.sqrt(np.diag(pcov))
         m = popt[0]
         m_err = perr[0]
